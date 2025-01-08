@@ -25,7 +25,10 @@ Run it once to create a `~/.quicklyrc` file, add directories you want to run com
 Quickly handles `status` itself to provide a quick overview of the git status of each directory. 
 
 ```sh
-quickly status
+> quickly status
+[first-project]           main            Clean 
+[api-service]             main            1 modified 
+[automation]              feat1           Clean [behind 1]
 ```
 
 ### Command runner
@@ -34,7 +37,7 @@ quickly status
 quickly some command
 ```
 
-or if you want a more complex command wrap it in quotes
+Or if you want a more complex command wrap it in quotes, as all commands are run in a shell.
 
 ```sh
 quickly 'cat somefile.txt | grep something'
