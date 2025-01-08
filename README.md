@@ -13,8 +13,12 @@ go install github.com/joeyciechanowicz/quickly@latest
 
 ## Usage
 
-Run it once to create a `~/.quicklyrc` file, add directories you want to run commands in to that file. One directory per line.
+Run it once to create a `~/.quicklyrc` file, add directories you want to run commands in to that file. One directory per line. For example
 
+```
+~/git/some-dir
+~/git/other-dir
+```
 
 ### Git status
 
