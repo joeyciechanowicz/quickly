@@ -53,8 +53,6 @@ var colors = []string{
 
 const resetColor = "\033[0m"
 
-const minLength = 25
-
 func createDefaultConfig(configPath string) error {
 	// Create empty config file
 	file, err := os.OpenFile(configPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
@@ -295,13 +293,6 @@ func main() {
 	hasErrors := false
 	for result := range results {
 		if result.Error != nil {
-			fmt.Printf("%s[%s]%s %s\n",
-				result.Color,
-				filepath.Base(result.Directory),
-				resetColor,
-				result.Error,
-			)
-			// fmt.Fprintf(os.Stderr, "[%s] Command failed: %v\n", filepath.Base(result.Directory), result.Error)
 			hasErrors = true
 		}
 	}
