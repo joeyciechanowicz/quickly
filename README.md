@@ -3,7 +3,13 @@ Fast concurrent command runner, written in Go.
 
 ## Installation
 
-Grab the latest build from [Releases](https://github.com/joeyciechanowicz/quickly/releases) and place it in your path.
+Get the latest build from [Releases](https://github.com/joeyciechanowicz/quickly/releases) and place it in your path.
+
+Alternatively install with `Go`
+
+```sh
+go install github.com/joeyciechanowicz/quickly@latest
+```
 
 ## Usage
 
