@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,124 +16,16 @@ type Config struct {
 }
 
 type CommandOutput struct {
-	Directory string
-	Output    string
-	Error     error
-	Color     string
+	Output string
+	Error  error
+	Color  string
 }
 
 type Task struct {
-	Directory string
-	ShellCmd  string
-	Color     string
-}
-
-type prefixedWriter struct {
-	directory string
-	writer    io.Writer
-	color     string
-}
-
-var colors = []string{
-	"\033[31m", // Red
-	"\033[32m", // Green
-	"\033[33m", // Yellow
-	"\033[34m", // Blue
-	"\033[35m", // Magenta
-	"\033[36m", // Cyan
-	// "\033[91m", // Bright Red
-	// "\033[92m", // Bright Green
-	// "\033[93m", // Bright Yellow
-	// "\033[94m", // Bright Blue
-	// "\033[95m", // Bright Magenta
-	// "\033[96m", // Bright Cyan
-}
-
-const resetColor = "\033[0m"
-
-func createDefaultConfig(configPath string) error {
-	// Create empty config file
-	file, err := os.OpenFile(configPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to create config file: %w", err)
-	}
-	defer file.Close()
-
-	// Get current working directory as default
-	currentDir, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
-	}
-
-	// Write current directory as default
-	if _, err := fmt.Fprintln(file, currentDir); err != nil {
-		return fmt.Errorf("failed to write to config file: %w", err)
-	}
-
-	return nil
-}
-
-func readConfig() (Config, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return Config{}, fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	configPath := filepath.Join(homeDir, ".quicklyrc")
-
-	// Try to create config if it doesn't exist
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
-		if err := createDefaultConfig(configPath); err != nil {
-			return Config{}, fmt.Errorf("failed to create default config: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "Created new config file at %s with current directory\n", configPath)
-	}
-
-	file, err := os.Open(configPath)
-	if err != nil {
-		return Config{}, fmt.Errorf("failed to open config file: %w", err)
-	}
-	defer file.Close()
-
-	var directories []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		dir := strings.TrimSpace(scanner.Text())
-		if dir != "" {
-			directories = append(directories, dir)
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return Config{}, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	return Config{Directories: directories}, nil
-}
-
-func assignColors(directories []string) map[string]string {
-	colorMap := make(map[string]string)
-	for i, dir := range directories {
-		colorMap[dir] = colors[i%len(colors)]
-	}
-	return colorMap
-}
-
-func (w *prefixedWriter) Write(p []byte) (n int, err error) {
-	scanner := bufio.NewScanner(strings.NewReader(string(p)))
-	scanner.Split(bufio.ScanLines)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		fmt.Fprintf(w.writer, "%s[%s]%s %s\n",
-			w.color,
-			w.directory,
-			resetColor,
-			line,
-		)
-	}
-
-	return len(p), nil
+	BranchFilter string
+	Color        string
+	Directory    string
+	ShellCmd     string
 }
 
 func filterStrings(input []string) []string {
@@ -148,61 +38,90 @@ func filterStrings(input []string) []string {
 	return filtered
 }
 
+var branchRegexp = regexp.MustCompile(`(\[.+\])`)
+
+func status(writer *PrefixedWriter, task Task) error {
+	cmd := exec.Command("git", "status", "--branch", "--porcelain")
+	cmd.Dir = task.Directory
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(output), "\n")
+	lines = filterStrings(lines)
+
+	branchInfo := lines[0]
+	lines = lines[1:]
+
+	behind := branchRegexp.FindString(branchInfo)
+	modified := fmt.Sprintf("%sClean%s", "\033[32m", resetColor)
+	if len(lines) > 0 {
+		modified = fmt.Sprintf("%s%d modified%s", "\033[31m", len(lines), resetColor)
+	}
+
+	branchName := strings.Split(branchInfo[3:], "...")[0]
+
+	fmt.Printf("%s%-25s%s %-15s %-10s %s\n",
+		writer.color,
+		fmt.Sprintf("[%s]", writer.directory),
+		resetColor,
+		branchName,
+		modified,
+		behind,
+	)
+
+	return nil
+}
+
+func branchName(task Task) (string, error) {
+	cmd := exec.Command("git", "branch", "--show-current")
+	cmd.Dir = task.Directory
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		return "", fmt.Errorf("failed to get branch name: %w", err)
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
 func executeCommand(task Task) CommandOutput {
 	if task.ShellCmd == "" {
 		return CommandOutput{
-			Directory: task.Directory,
-			Error:     fmt.Errorf("no command provided"),
+			Error: fmt.Errorf("no command provided"),
 		}
 	}
 
-	writer := &prefixedWriter{
+	writer := &PrefixedWriter{
 		directory: filepath.Base(task.Directory),
 		color:     task.Color,
 		writer:    os.Stdout,
 	}
 
-	// Handle the `status` command separately to give cleaner output
-	if task.ShellCmd == "status" {
-		cmd := exec.Command("git", "status", "--branch", "--porcelain")
-		cmd.Dir = task.Directory
-		output, err := cmd.CombinedOutput()
-
+	if task.BranchFilter != "" {
+		currentBranch, err := branchName(task)
 		if err != nil {
 			return CommandOutput{
-				Directory: task.Directory,
-				Error:     err,
+				Error: err,
 			}
 		}
-		lines := strings.Split(string(output), "\n")
-		lines = filterStrings(lines)
 
-		branchInfo := lines[0]
-		lines = lines[1:]
-
-		re, _ := regexp.Compile(`(\[.+\])`)
-		behind := re.FindString(branchInfo)
-		modified := fmt.Sprintf("%sClean%s", "\033[32m", resetColor)
-		if len(lines) > 0 {
-			modified = fmt.Sprintf("%s%d modified%s", "\033[31m", len(lines), resetColor)
+		if currentBranch != task.BranchFilter {
+			return CommandOutput{}
 		}
+	}
 
-		branchName := strings.Split(branchInfo[3:], "...")[0]
-
-		fmt.Printf("%s%-25s%s %-15s %-10s %s\n",
-			writer.color,
-			fmt.Sprintf("[%s]", writer.directory),
-			resetColor,
-			branchName,
-			modified,
-			behind,
-		)
-
-		return CommandOutput{
-			Directory: task.Directory,
-			Color:     task.Color,
-			Error:     nil,
+	// Handle the `status` command separately to give cleaner output
+	if task.ShellCmd == "status" {
+		err := status(writer, task)
+		if err != nil {
+			return CommandOutput{
+				Error: err,
+			}
 		}
+		return CommandOutput{}
 	}
 
 	cmd := exec.Command("bash", "-c", task.ShellCmd) // Changed to bash for better color support
@@ -224,8 +143,7 @@ func executeCommand(task Task) CommandOutput {
 
 	err := cmd.Run()
 	return CommandOutput{
-		Directory: task.Directory,
-		Error:     err,
+		Error: err,
 	}
 }
 
@@ -248,21 +166,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Assign unique colors to directories
-	colorMap := assignColors(config.Directories)
+	// Filter out --if-branch some-string from the command
+	branchFilter := ""
 
-	numWorkers := runtime.NumCPU()
-	tasks := make(chan Task, len(config.Directories))
-	results := make(chan CommandOutput, len(config.Directories))
-	var wg sync.WaitGroup
-
-	// Start worker pool
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go worker(tasks, results, &wg)
+	var shellCmd string
+	if os.Args[1] == "--if-branch" || os.Args[1] == "-b" {
+		branchFilter = os.Args[2]
+		shellCmd = strings.Join(os.Args[3:], " ")
+	} else {
+		shellCmd = strings.Join(os.Args[1:], " ")
 	}
-
-	shellCmd := strings.Join(os.Args[1:], " ")
 
 	// Explicitly set color flags for common commands
 	if !strings.Contains(shellCmd, "--color") {
@@ -273,12 +186,27 @@ func main() {
 		shellCmd = strings.ReplaceAll(shellCmd, "git ", "git -c color.status=always ")
 	}
 
+	numWorkers := runtime.NumCPU()
+	tasks := make(chan Task, len(config.Directories))
+	results := make(chan CommandOutput, len(config.Directories))
+	var wg sync.WaitGroup
+
+	// Start worker pool
+	for range numWorkers {
+		wg.Add(1)
+		go worker(tasks, results, &wg)
+	}
+
+	// Assign unique colors to directories
+	colorMap := assignColors(config.Directories)
+
 	// Send tasks to workers
 	for _, dir := range config.Directories {
 		tasks <- Task{
-			Directory: dir,
-			ShellCmd:  shellCmd,
-			Color:     colorMap[dir],
+			Directory:    dir,
+			ShellCmd:     shellCmd,
+			Color:        colorMap[dir],
+			BranchFilter: branchFilter,
 		}
 	}
 	close(tasks)
