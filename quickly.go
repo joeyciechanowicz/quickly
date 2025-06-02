@@ -108,7 +108,7 @@ func executeCommand(task Task) CommandOutput {
 			}
 		}
 
-		if currentBranch != task.BranchFilter {
+		if !strings.Contains(currentBranch, task.BranchFilter) {
 			return CommandOutput{}
 		}
 	}

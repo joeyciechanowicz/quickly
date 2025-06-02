@@ -52,7 +52,7 @@ If you want to only run commands when the branch matches, you can use `--if-bran
 quickly --if-branch some-branch your command
 ```
 
-Or you can use the shorthand
+You can also match substrings, or use the shorthand version
 ```sh
-quickly -b some-branch your command
+quickly -b som your command
 ```
