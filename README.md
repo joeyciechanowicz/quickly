@@ -42,3 +42,17 @@ Or if you want a more complex command wrap it in quotes, as all commands are run
 ```sh
 quickly 'cat somefile.txt | grep something'
 ```
+
+
+### Filter based on branch
+
+If you want to only run commands when the branch matches, you can use `--if-branch`.
+
+```sh
+quickly --if-branch some-branch your command
+```
+
+Or you can use the shorthand
+```sh
+quickly -b some-branch your command
+```
