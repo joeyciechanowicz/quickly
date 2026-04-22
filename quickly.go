@@ -28,6 +28,13 @@ type Task struct {
 	ShellCmd     string
 }
 
+type statusSummary struct {
+	BranchName     string
+	Behind         string
+	TrackedCount   int
+	UntrackedCount int
+}
+
 func filterStrings(input []string) []string {
 	var filtered []string
 	for _, str := range input {
@@ -40,38 +47,102 @@ func filterStrings(input []string) []string {
 
 var branchRegexp = regexp.MustCompile(`(\[.+\])`)
 
+func parseStatusOutput(output []byte) (statusSummary, error) {
+	lines := strings.Split(string(output), "\n")
+	lines = filterStrings(lines)
+	if len(lines) == 0 {
+		return statusSummary{}, fmt.Errorf("git status returned no output")
+	}
+
+	branchInfo := lines[0]
+	branchName := strings.TrimPrefix(branchInfo, "## ")
+	if strings.Contains(branchName, "...") {
+		branchName = strings.Split(branchName, "...")[0]
+	}
+	if match := branchRegexp.FindString(branchInfo); match != "" {
+		branchName = strings.TrimSpace(strings.TrimSuffix(branchName, match))
+	}
+
+	trackedCount := 0
+	untrackedCount := 0
+	for _, line := range lines[1:] {
+		if strings.HasPrefix(line, "??") {
+			untrackedCount++
+			continue
+		}
+		trackedCount++
+	}
+
+	return statusSummary{
+		BranchName:     branchName,
+		Behind:         branchRegexp.FindString(branchInfo),
+		TrackedCount:   trackedCount,
+		UntrackedCount: untrackedCount,
+	}, nil
+}
+
+func statusMatchesBranchFilter(summary statusSummary, branchFilter string) bool {
+	if branchFilter == "" {
+		return true
+	}
+	return strings.Contains(summary.BranchName, branchFilter)
+}
+
+func formatStatusLine(writer *PrefixedWriter, summary statusSummary) string {
+	statusParts := []string{}
+	if summary.TrackedCount > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("\033[33m!%d%s", summary.TrackedCount, resetColor))
+	}
+	if summary.UntrackedCount > 0 {
+		statusParts = append(statusParts, fmt.Sprintf("\033[34m?%d%s", summary.UntrackedCount, resetColor))
+	}
+	statusText := fmt.Sprintf("%sClean%s", "\033[32m", resetColor)
+	if len(statusParts) > 0 {
+		statusText = strings.Join(statusParts, " ")
+	}
+
+	return fmt.Sprintf("%s%-25s%s %-15s %-10s %s\n",
+		writer.color,
+		fmt.Sprintf("[%s]", writer.directory),
+		resetColor,
+		summary.BranchName,
+		statusText,
+		summary.Behind,
+	)
+}
+
+func recommendedWorkerCount(repoCount, cpuCount int) int {
+	if repoCount <= 1 || cpuCount <= 1 {
+		return 1
+	}
+
+	workers := cpuCount * 2
+	if workers > repoCount {
+		workers = repoCount
+	}
+	if workers < 1 {
+		return 1
+	}
+	return workers
+}
+
 func status(writer *PrefixedWriter, task Task) error {
 	cmd := exec.Command("git", "status", "--branch", "--porcelain")
 	cmd.Dir = task.Directory
-	output, err := cmd.CombinedOutput()
-
+	output, err := cmd.Output()
 	if err != nil {
 		return err
 	}
 
-	lines := strings.Split(string(output), "\n")
-	lines = filterStrings(lines)
-
-	branchInfo := lines[0]
-	lines = lines[1:]
-
-	behind := branchRegexp.FindString(branchInfo)
-	modified := fmt.Sprintf("%sClean%s", "\033[32m", resetColor)
-	if len(lines) > 0 {
-		modified = fmt.Sprintf("%s%d modified%s", "\033[31m", len(lines), resetColor)
+	summary, err := parseStatusOutput(output)
+	if err != nil {
+		return err
+	}
+	if !statusMatchesBranchFilter(summary, task.BranchFilter) {
+		return nil
 	}
 
-	branchName := strings.Split(branchInfo[3:], "...")[0]
-
-	fmt.Printf("%s%-25s%s %-15s %-10s %s\n",
-		writer.color,
-		fmt.Sprintf("[%s]", writer.directory),
-		resetColor,
-		branchName,
-		modified,
-		behind,
-	)
-
+	fmt.Print(formatStatusLine(writer, summary))
 	return nil
 }
 
@@ -100,6 +171,17 @@ func executeCommand(task Task) CommandOutput {
 		writer:    os.Stdout,
 	}
 
+	// Handle the `status` command separately to give cleaner output
+	if task.ShellCmd == "status" {
+		err := status(writer, task)
+		if err != nil {
+			return CommandOutput{
+				Error: err,
+			}
+		}
+		return CommandOutput{}
+	}
+
 	if task.BranchFilter != "" {
 		currentBranch, err := branchName(task)
 		if err != nil {
@@ -111,17 +193,6 @@ func executeCommand(task Task) CommandOutput {
 		if !strings.Contains(currentBranch, task.BranchFilter) {
 			return CommandOutput{}
 		}
-	}
-
-	// Handle the `status` command separately to give cleaner output
-	if task.ShellCmd == "status" {
-		err := status(writer, task)
-		if err != nil {
-			return CommandOutput{
-				Error: err,
-			}
-		}
-		return CommandOutput{}
 	}
 
 	cmd := exec.Command("bash", "-c", task.ShellCmd) // Changed to bash for better color support
@@ -177,16 +248,18 @@ func main() {
 		shellCmd = strings.Join(os.Args[1:], " ")
 	}
 
-	// Explicitly set color flags for common commands
-	if !strings.Contains(shellCmd, "--color") {
-		shellCmd = strings.ReplaceAll(shellCmd, "ls ", "ls --color=always ")
-		shellCmd = strings.ReplaceAll(shellCmd, "grep ", "grep --color=always ")
-	}
-	if !strings.Contains(shellCmd, "-c color") {
-		shellCmd = strings.ReplaceAll(shellCmd, "git ", "git -c color.status=always ")
+	if shellCmd != "status" {
+		// Explicitly set color flags for common commands
+		if !strings.Contains(shellCmd, "--color") {
+			shellCmd = strings.ReplaceAll(shellCmd, "ls ", "ls --color=always ")
+			shellCmd = strings.ReplaceAll(shellCmd, "grep ", "grep --color=always ")
+		}
+		if !strings.Contains(shellCmd, "-c color") {
+			shellCmd = strings.ReplaceAll(shellCmd, "git ", "git -c color.status=always ")
+		}
 	}
 
-	numWorkers := runtime.NumCPU()
+	numWorkers := recommendedWorkerCount(len(config.Directories), runtime.NumCPU())
 	tasks := make(chan Task, len(config.Directories))
 	results := make(chan CommandOutput, len(config.Directories))
 	var wg sync.WaitGroup
