@@ -237,19 +237,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Filter out --if-branch some-string from the command
 	branchFilter := ""
+	interactive := false
 
-	var shellCmd string
-	if os.Args[1] == "--if-branch" || os.Args[1] == "-b" {
-		branchFilter = os.Args[2]
-		shellCmd = strings.Join(os.Args[3:], " ")
-	} else {
-		shellCmd = strings.Join(os.Args[1:], " ")
+	args := os.Args[1:]
+	var remaining []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--if-branch", "-b":
+			if i+1 < len(args) {
+				branchFilter = args[i+1]
+				i++
+			}
+		case "--interactive", "-i":
+			interactive = true
+		default:
+			remaining = append(remaining, args[i])
+		}
 	}
+	shellCmd := strings.Join(remaining, " ")
 
 	if shellCmd != "status" {
-		// Explicitly set color flags for common commands
 		if !strings.Contains(shellCmd, "--color") {
 			shellCmd = strings.ReplaceAll(shellCmd, "ls ", "ls --color=always ")
 			shellCmd = strings.ReplaceAll(shellCmd, "grep ", "grep --color=always ")
@@ -259,21 +267,26 @@ func main() {
 		}
 	}
 
+	colorMap := assignColors(config.Directories)
+
+	if interactive {
+		hasErrors := interactiveRun(config.Directories, shellCmd, branchFilter, colorMap)
+		if hasErrors {
+			os.Exit(1)
+		}
+		return
+	}
+
 	numWorkers := recommendedWorkerCount(len(config.Directories), runtime.NumCPU())
 	tasks := make(chan Task, len(config.Directories))
 	results := make(chan CommandOutput, len(config.Directories))
 	var wg sync.WaitGroup
 
-	// Start worker pool
 	for range numWorkers {
 		wg.Add(1)
 		go worker(tasks, results, &wg)
 	}
 
-	// Assign unique colors to directories
-	colorMap := assignColors(config.Directories)
-
-	// Send tasks to workers
 	for _, dir := range config.Directories {
 		tasks <- Task{
 			Directory:    dir,
