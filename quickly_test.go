@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -189,5 +190,39 @@ func TestExecuteCommandStatusBranchFilterReturnsWithoutBranchLookup(t *testing.T
 	}
 	if strings.Contains(result.Error.Error(), "failed to get branch name") {
 		t.Fatalf("executeCommand() error = %q, want status path without branch lookup", result.Error)
+	}
+}
+
+func TestPtyRunnerEmitsLines(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("PTY integration test skipped in CI (no TTY)")
+	}
+
+	dir := t.TempDir()
+	pb := newPaneBuffer("test", "\033[32m", maxPaneLines)
+
+	result := ptyRunner(Task{
+		Directory: dir,
+		ShellCmd:  "echo hello && sleep 0.05 && echo world",
+		Color:     "\033[32m",
+	}, pb)
+
+	if result.Error != nil {
+		t.Fatalf("ptyRunner() error = %v", result.Error)
+	}
+	if pb.getState() != Done {
+		t.Fatalf("pane state = %v, want Done", pb.getState())
+	}
+
+	lines := pb.snapshot()
+	found := map[string]bool{}
+	for _, l := range lines {
+		found[l] = true
+	}
+	if !found["hello"] {
+		t.Fatalf("lines=%v, want 'hello' present", lines)
+	}
+	if !found["world"] {
+		t.Fatalf("lines=%v, want 'world' present", lines)
 	}
 }

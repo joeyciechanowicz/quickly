@@ -18,7 +18,6 @@ import (
 func ptyRunner(task Task, pane *PaneBuffer) CommandOutput {
 	cmd := exec.Command("bash", "-c", task.ShellCmd)
 	cmd.Dir = task.Directory
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	env := os.Environ()
 	env = append(env,

@@ -21,6 +21,13 @@ func normaliseChunk(p []byte, carry string) (lines []string, newCarry string) {
 			cur = ""
 			i++
 		case b == 13:
+			// \r\n is a normal PTY line terminator — treat as just \n.
+			if i+1 < len(p) && p[i+1] == 10 {
+				lines = append(lines, cur)
+				cur = ""
+				i += 2
+				continue
+			}
 			cur = ""
 			i++
 		case b == 27 && i+1 < len(p) && p[i+1] == '[':
