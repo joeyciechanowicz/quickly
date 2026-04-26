@@ -25,20 +25,10 @@ type paneLayout struct {
 func computeLayout(panes []*PaneBuffer, termHeight int) []paneLayout {
 	layouts := make([]paneLayout, len(panes))
 
-	failedLines := 0
-	doneCount := 0
 	activeCount := 0
-
 	for i, pb := range panes {
-		switch pb.getState() {
-		case Failed:
-			n := len(pb.snapshot())
-			layouts[i].contentLines = n
-			failedLines += n + 1
-		case Done:
-			layouts[i].contentLines = 0
-			doneCount++
-		case Active:
+		layouts[i].contentLines = 0
+		if pb.getState() == Active {
 			activeCount++
 		}
 	}
@@ -48,10 +38,12 @@ func computeLayout(panes []*PaneBuffer, termHeight int) []paneLayout {
 	}
 
 	dividers := 0
-	if len(panes) > 1 {
-		dividers = len(panes) - 1
+	if activeCount > 1 {
+		dividers = activeCount - 1
 	}
-	remaining := termHeight - failedLines - doneCount - activeCount - dividers
+	// One line reserved for the footer status.
+	footer := 1
+	remaining := termHeight - activeCount - dividers - footer
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -96,6 +88,50 @@ func (d *dashboard) stop() {
 	d.render()
 	fmt.Print("\033[?25h")
 	fmt.Println()
+	d.printFailureSummary()
+	fmt.Println(d.statusFooter())
+}
+
+func (d *dashboard) statusFooter() string {
+	var queued, done, failed, active int
+	for _, pb := range d.panes {
+		switch pb.getState() {
+		case Queued:
+			queued++
+		case Done:
+			done++
+		case Failed:
+			failed++
+		case Active:
+			active++
+		}
+	}
+	return fmt.Sprintf(
+		"\033[34m%d queued\033[0m  \033[32m%d completed\033[0m  \033[31m%d errored\033[0m  \033[2m%d running\033[0m",
+		queued, done, failed, active,
+	)
+}
+
+func (d *dashboard) printFailureSummary() {
+	var failed []*PaneBuffer
+	for _, pb := range d.panes {
+		if pb.getState() == Failed {
+			failed = append(failed, pb)
+		}
+	}
+	if len(failed) == 0 {
+		return
+	}
+	fmt.Printf("\n\033[31m%d command(s) failed:\033[0m\n", len(failed))
+	for _, pb := range failed {
+		dur := pb.getDuration().Round(time.Second)
+		fmt.Printf("\n\033[31m✗\033[0m %s[%s]%s failed in %s\n",
+			pb.color, pb.dir, resetColor, dur)
+		for _, l := range pb.snapshot() {
+			fmt.Println(pb.color + l + resetColor)
+		}
+	}
+	fmt.Println()
 }
 
 func (d *dashboard) loop() {
@@ -134,41 +170,40 @@ func (d *dashboard) render() {
 
 	lineCount := 0
 
+	rendered := 0
+	queued := 0
+	doneCount := 0
+	failedCount := 0
+	activeCount := 0
 	for i, pb := range d.panes {
-		if i > 0 {
-			fmt.Fprintln(&sb, truncate(strings.Repeat("─", termWidth), termWidth))
+		state := pb.getState()
+		switch state {
+		case Queued:
+			queued++
+			continue
+		case Done:
+			doneCount++
+			continue
+		case Failed:
+			failedCount++
+			continue
+		case Active:
+			activeCount++
+		}
+		if rendered > 0 {
+			writeLine(&sb, strings.Repeat("─", termWidth))
 			lineCount++
 		}
+		rendered++
 		layout := layouts[i]
-		state := pb.getState()
-		dur := pb.getDuration()
-		if state == Active {
-			dur = time.Since(pb.startedAt).Round(time.Second)
-		}
+		dur := time.Since(pb.startedAt).Round(time.Second)
 		dirLabel := pb.dir
 
 		switch state {
-		case Done:
-			line := fmt.Sprintf("✓ %s[%s]%s done in %s",
-				pb.color, dirLabel, resetColor, dur.Round(time.Second))
-			fmt.Fprintln(&sb, truncate(line, termWidth))
-			lineCount++
-
-		case Failed:
-			header := fmt.Sprintf("✗ %s[%s]%s failed in %s",
-				pb.color, dirLabel, resetColor, dur.Round(time.Second))
-			fmt.Fprintln(&sb, truncate(header, termWidth))
-			lineCount++
-			lines := pb.snapshot()
-			for _, l := range lines {
-				fmt.Fprintln(&sb, truncate(pb.color+l+resetColor, termWidth))
-				lineCount++
-			}
-
 		case Active:
 			header := fmt.Sprintf("%s[%s]%s ── running… %s",
 				pb.color, dirLabel, resetColor, dur)
-			fmt.Fprintln(&sb, truncate(header, termWidth))
+			writeLine(&sb, truncate(header, termWidth))
 			lineCount++
 			lines := pb.snapshot()
 			start := 0
@@ -177,21 +212,33 @@ func (d *dashboard) render() {
 			}
 			shown := lines[start:]
 			for _, l := range shown {
-				fmt.Fprintln(&sb, truncate(pb.color+l+resetColor, termWidth))
+				writeLine(&sb, truncate(pb.color+l+resetColor, termWidth))
 				lineCount++
 			}
 			for j := len(shown); j < layout.contentLines; j++ {
-				fmt.Fprintln(&sb, "\033[2K")
+				writeLine(&sb, "")
 				lineCount++
 			}
 		}
 	}
 
-	fmt.Fprintln(&sb, "\033[2K")
+	footer := fmt.Sprintf(
+		"\033[34m%d queued\033[0m  \033[32m%d completed\033[0m  \033[31m%d errored\033[0m  \033[2m%d running\033[0m",
+		queued, doneCount, failedCount, activeCount,
+	)
+	writeLine(&sb, truncate(footer, termWidth))
 	lineCount++
 
 	fmt.Print(sb.String())
 	d.totalLines = lineCount
+}
+
+// writeLine emits s followed by an erase-to-end-of-line and a newline.
+// The EL ensures any trailing characters from a previous frame's longer
+// line at this row are cleared, preventing bleed-through.
+func writeLine(b *strings.Builder, s string) {
+	b.WriteString(s)
+	b.WriteString("\033[K\n")
 }
 
 // truncate trims s to at most maxCols visible columns, preserving ANSI SGR

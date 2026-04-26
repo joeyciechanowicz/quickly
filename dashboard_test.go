@@ -10,9 +10,13 @@ func makePanes(states ...PaneState) []*PaneBuffer {
 	for i, s := range states {
 		panes[i] = newPaneBuffer("repo", "\033[32m", maxPaneLines)
 		switch s {
+		case Active:
+			panes[i].start()
 		case Done:
+			panes[i].start()
 			panes[i].complete(time.Second)
 		case Failed:
+			panes[i].start()
 			panes[i].fail(time.Second)
 			for j := 0; j < 5; j++ {
 				panes[i].appendLine("error line")
@@ -49,11 +53,14 @@ func TestComputeLayoutDonePanesGetOneLine(t *testing.T) {
 	}
 }
 
-func TestComputeLayoutFailedPanesGetFullHistory(t *testing.T) {
+func TestComputeLayoutFailedPanesHidden(t *testing.T) {
 	panes := makePanes(Failed, Active)
 	layouts := computeLayout(panes, 30)
-	if layouts[0].contentLines != 5 {
-		t.Fatalf("Failed pane contentLines=%d, want 5", layouts[0].contentLines)
+	if layouts[0].contentLines != 0 {
+		t.Fatalf("Failed pane contentLines=%d, want 0 (failures shown in summary)", layouts[0].contentLines)
+	}
+	if layouts[1].contentLines < 3 {
+		t.Fatalf("Active pane contentLines=%d, want >= 3", layouts[1].contentLines)
 	}
 }
 

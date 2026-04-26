@@ -16,6 +16,7 @@ import (
 // ptyRunner runs a task inside a pseudo-terminal, feeding normalised output
 // lines into pane. It blocks until the subprocess exits.
 func ptyRunner(task Task, pane *PaneBuffer) CommandOutput {
+	pane.start()
 	cmd := exec.Command("bash", "-c", task.ShellCmd)
 	cmd.Dir = task.Directory
 

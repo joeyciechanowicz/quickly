@@ -30,8 +30,12 @@ func TestPaneBufferRingEvictsOldest(t *testing.T) {
 
 func TestPaneBufferStateTransitionsToDone(t *testing.T) {
 	pb := newPaneBuffer("myrepo", "\033[32m", 5)
+	if pb.getState() != Queued {
+		t.Fatal("initial state should be Queued")
+	}
+	pb.start()
 	if pb.getState() != Active {
-		t.Fatal("initial state should be Active")
+		t.Fatal("state should be Active after start()")
 	}
 	pb.complete(12 * time.Second)
 	if pb.getState() != Done {

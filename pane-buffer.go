@@ -8,7 +8,8 @@ import (
 type PaneState int
 
 const (
-	Active PaneState = iota
+	Queued PaneState = iota
+	Active
 	Done
 	Failed
 )
@@ -30,12 +31,19 @@ type PaneBuffer struct {
 
 func newPaneBuffer(dir, color string, capacity int) *PaneBuffer {
 	return &PaneBuffer{
-		dir:       dir,
-		color:     color,
-		lines:     make([]string, capacity),
-		cap:       capacity,
-		startedAt: time.Now(),
+		dir:   dir,
+		color: color,
+		lines: make([]string, capacity),
+		cap:   capacity,
+		state: Queued,
 	}
+}
+
+func (pb *PaneBuffer) start() {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	pb.state = Active
+	pb.startedAt = time.Now()
 }
 
 func (pb *PaneBuffer) appendLine(line string) {
