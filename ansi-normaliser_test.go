@@ -90,6 +90,35 @@ func TestNormaliseCarryPrependedToNextChunk(t *testing.T) {
 	}
 }
 
+func TestNormalisePreservesMultibyteUTF8(t *testing.T) {
+	// Box drawing char ─ is UTF-8 0xE2 0x94 0x80; spinner ⠋ is 0xE2 0xA0 0x8B.
+	input := bytes("─⠋ done", string([]byte{10}))
+	lines, _ := normaliseChunk(input, "")
+	if len(lines) != 1 || lines[0] != "─⠋ done" {
+		t.Fatalf("got lines=%v, want [─⠋ done] (multi-byte UTF-8 must survive)", lines)
+	}
+}
+
+func TestNormaliseStripsOSCHyperlink(t *testing.T) {
+	esc := string([]byte{27})
+	// yarn hyperlink: ESC ]8;;URL ESC \ TEXT ESC ]8;; ESC \
+	input := []byte(esc + "]8;;https://example.com" + esc + "\\YN0035" + esc + "]8;;" + esc + "\\: error" + string([]byte{10}))
+	lines, _ := normaliseChunk(input, "")
+	if len(lines) != 1 || lines[0] != "YN0035: error" {
+		t.Fatalf("got lines=%v, want [YN0035: error]", lines)
+	}
+}
+
+func TestNormaliseStripsOSCHyperlinkBELTerminated(t *testing.T) {
+	esc := string([]byte{27})
+	bel := string([]byte{0x07})
+	input := []byte(esc + "]8;;https://example.com" + bel + "click" + esc + "]8;;" + bel + string([]byte{10}))
+	lines, _ := normaliseChunk(input, "")
+	if len(lines) != 1 || lines[0] != "click" {
+		t.Fatalf("got lines=%v, want [click]", lines)
+	}
+}
+
 func TestNormaliseYarnStyleProgressLine(t *testing.T) {
 	input := bytes("progress 10%", string([]byte{13}), "progress 20%", string([]byte{13}), "progress 100%", string([]byte{10}))
 	lines, carry := normaliseChunk(input, "")

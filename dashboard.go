@@ -47,7 +47,11 @@ func computeLayout(panes []*PaneBuffer, termHeight int) []paneLayout {
 		return layouts
 	}
 
-	remaining := termHeight - failedLines - doneCount - activeCount
+	dividers := 0
+	if len(panes) > 1 {
+		dividers = len(panes) - 1
+	}
+	remaining := termHeight - failedLines - doneCount - activeCount - dividers
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -131,6 +135,10 @@ func (d *dashboard) render() {
 	lineCount := 0
 
 	for i, pb := range d.panes {
+		if i > 0 {
+			fmt.Fprintln(&sb, truncate(strings.Repeat("─", termWidth), termWidth))
+			lineCount++
+		}
 		layout := layouts[i]
 		state := pb.getState()
 		dur := pb.getDuration()
@@ -186,10 +194,43 @@ func (d *dashboard) render() {
 	d.totalLines = lineCount
 }
 
-// truncate trims s to at most maxCols visible characters (approximate).
+// truncate trims s to at most maxCols visible columns, preserving ANSI SGR
+// sequences whole (never slicing inside an escape) and ensuring the result
+// ends with a reset so color cannot bleed into following output.
 func truncate(s string, maxCols int) string {
-	if len(s) <= maxCols {
-		return s
+	if maxCols <= 0 {
+		return resetColor
 	}
-	return s[:maxCols]
+	var b strings.Builder
+	b.Grow(len(s) + len(resetColor))
+	visible := 0
+	hadSGR := false
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		if c == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) {
+				cc := s[j]
+				j++
+				if cc >= 0x40 && cc <= 0x7e {
+					break
+				}
+			}
+			b.WriteString(s[i:j])
+			hadSGR = true
+			i = j
+			continue
+		}
+		if visible >= maxCols {
+			break
+		}
+		b.WriteByte(c)
+		visible++
+		i++
+	}
+	if hadSGR {
+		b.WriteString(resetColor)
+	}
+	return b.String()
 }

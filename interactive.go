@@ -14,7 +14,7 @@ import (
 
 // interactiveRun executes shellCmd across all directories using PTY runners
 // and a live dashboard. Blocks until all tasks complete.
-func interactiveRun(directories []string, shellCmd, branchFilter string, colorMap map[string]string) bool {
+func interactiveRun(directories []string, shellCmd, branchFilter string, colorMap map[string]string, concurrency int) bool {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		fmt.Fprintln(os.Stderr, "quickly: --interactive requires a TTY; falling back to streaming mode")
 		hasErrors := false
@@ -32,9 +32,15 @@ func interactiveRun(directories []string, shellCmd, branchFilter string, colorMa
 		return hasErrors
 	}
 
-	numWorkers := runtime.NumCPU()
+	numWorkers := concurrency
+	if numWorkers < 1 {
+		numWorkers = runtime.NumCPU()
+	}
 	if numWorkers < 1 {
 		numWorkers = 1
+	}
+	if numWorkers > len(directories) {
+		numWorkers = len(directories)
 	}
 
 	panes := make([]*PaneBuffer, len(directories))

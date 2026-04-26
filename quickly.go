@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -239,6 +240,7 @@ func main() {
 
 	branchFilter := ""
 	interactive := false
+	concurrency := 0
 
 	args := os.Args[1:]
 	var remaining []string
@@ -251,6 +253,18 @@ func main() {
 			}
 		case "--interactive", "-i":
 			interactive = true
+		case "--concurrency", "-c":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "quickly: --concurrency requires a positive integer")
+				os.Exit(1)
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 1 {
+				fmt.Fprintf(os.Stderr, "quickly: invalid --concurrency value %q (must be a positive integer)\n", args[i+1])
+				os.Exit(1)
+			}
+			concurrency = n
+			i++
 		default:
 			remaining = append(remaining, args[i])
 		}
@@ -270,14 +284,20 @@ func main() {
 	colorMap := assignColors(config.Directories)
 
 	if interactive {
-		hasErrors := interactiveRun(config.Directories, shellCmd, branchFilter, colorMap)
+		hasErrors := interactiveRun(config.Directories, shellCmd, branchFilter, colorMap, concurrency)
 		if hasErrors {
 			os.Exit(1)
 		}
 		return
 	}
 
-	numWorkers := recommendedWorkerCount(len(config.Directories), runtime.NumCPU())
+	numWorkers := concurrency
+	if numWorkers == 0 {
+		numWorkers = recommendedWorkerCount(len(config.Directories), runtime.NumCPU())
+	}
+	if numWorkers > len(config.Directories) {
+		numWorkers = len(config.Directories)
+	}
 	tasks := make(chan Task, len(config.Directories))
 	results := make(chan CommandOutput, len(config.Directories))
 	var wg sync.WaitGroup
