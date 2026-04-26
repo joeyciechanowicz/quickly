@@ -56,3 +56,21 @@ You can also match substrings, or use the shorthand version
 ```sh
 quickly -b som your command
 ```
+
+### Concurrency
+
+By default `quickly` picks a worker count based on the number of directories and your CPU count. Override it with `--concurrency` (or `-c`) to control how many directories run in parallel.
+
+```sh
+quickly --concurrency 4 your command
+quickly -c 1 your command   # run sequentially
+```
+
+### Interactive mode
+
+Use `--interactive` (or `-i`) to render a live dashboard while commands run, showing per-directory output as it streams. Useful for long-running commands or when you want to watch progress in real time.
+
+```sh
+quickly --interactive your command
+quickly -i your command
+```
